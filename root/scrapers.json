@@ -1,0 +1,14 @@
+[
+        {
+                "location": "Sin VPN",
+                "scraper": [{
+                        "Class": "RossBuses"
+                }]
+        },
+        {
+                "location": "Sin VPN",
+                "scraper": [{
+                        "Class": "DaimlerCoaches"
+                }]
+        }
+]
