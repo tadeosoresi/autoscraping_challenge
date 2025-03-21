@@ -1,0 +1,15 @@
+# Airflow files
+airflow.cfg
+airflow-webserver.pid
+airflow.db
+webserver_config.py
+
+# Extensions
+*.csv
+*.cfg 
+
+# Folders
+./logs/
+env/
+./deploy/minio/
+.deploy/mysql_data/
