@@ -21,12 +21,15 @@ Scraping de pagina de autobuses
 
 ### DEPLOY PROYECTO (UBUNTU 22.04) ###
 1. Ingresar a la carpeta deploy
-2. ```sudo sh deploy_etl.sh
+2. 
+   ```
+   sudo sh deploy_etl.sh
    ```
    Este comando levantara los contenedores de MySQL (Database), Minio (logs) e instala Airflow localmente
    con PostgreSQL (LocalExecutor).
 3. En otra consola ejecutar (carpeta deploy):
-   ```sudo sh deploy_scheduler.sh
+   ```
+   sudo sh deploy_scheduler.sh
    ```
    Este comando levantara el Airflow scheduler
 
