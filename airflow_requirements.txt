@@ -1,0 +1,12 @@
+apache-airflow-providers-common-sql
+apache-airflow-providers-mysql
+apache-airflow-providers-postgres
+apache-airflow-providers-amazon
+apache-airflow-providers-docker
+pymongo
+apache-airflow-providers-mongo
+pandas
+pymysql
+sshtunnel
+openpyxl
+PyVirtualDisplay
