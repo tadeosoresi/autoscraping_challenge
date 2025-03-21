@@ -9,7 +9,7 @@ webserver_config.py
 *.cfg 
 
 # Folders
-./logs/
+logs/
 env/
-./deploy/minio/
-.deploy/mysql_data/
+deploy/minio/
+deploy/mysql_data/
