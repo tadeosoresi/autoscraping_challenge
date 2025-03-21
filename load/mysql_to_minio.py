@@ -1,0 +1,2 @@
+class MySqlToMinio():
+    print("Test")
