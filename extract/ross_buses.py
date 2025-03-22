@@ -66,8 +66,9 @@ class RossBuses():
             self.sesion.close()
         if self.display:
             self.display.stop()
-        
-    
+        if self.__db:
+            self.__db.close()
+         
     def upload_log(self, exception_type: Optional[Type[BaseException]], 
                         exception_value: Optional[BaseException], 
                         exception_traceback: Optional[TracebackType]) -> None:
