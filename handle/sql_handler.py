@@ -74,8 +74,11 @@ class SQLAlchemyHandler:
         print("Conectado a MySQL via SQLAlchemy")
 
     def close(self):
-        self._engine.dispose()
-        print("Conexión cerrada")
+        try:
+            self._engine.dispose()
+            print("Conexión via SQLAlchemy cerrada")
+        except Exception:
+            pass
 
     def insert(self, query: str, data: dict) -> int:
         """
