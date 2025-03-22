@@ -20,6 +20,7 @@ except ModuleNotFoundError:
     sys.path.insert(1, path)
 from handle.request_handler import RequestsHandler
 from handle.sql_handler import PyMySQLHandler
+from handle.sql_handler import SQLAlchemyHandler
 from handle.boto_handler import BotoHandler
     
 class RossBuses():
@@ -36,11 +37,11 @@ class RossBuses():
         self.context = self.browser.new_context(ignore_https_errors=True)
         self.page = self.context.new_page()
         # Database
-        self._db = PyMySQLHandler("172.100.0.2", 
+        self.__db = SQLAlchemyHandler("172.100.0.2", 
                                    os.environ.get("MYSQL_USER"),
                                    os.environ.get("MYSQL_PASSWORD"),
                                    os.environ.get("MYSQL_DATABASE"))
-        self.scraped_buses = self._db.get_buses_titles()
+        self.scraped_buses = self.__db.get_buses_titles()
         
     def __enter__(self):
         # Display
@@ -118,15 +119,14 @@ class RossBuses():
                 for faq_index in range(bus_faqs.count()):
                     bus_faqs.nth(faq_index).click()
                     self.page.wait_for_timeout(2000)
-                    self.get_fields()
+                    self.get_fields(faq_index)
                     self.page.wait_for_timeout(1000)
                 self.page.wait_for_timeout(2000)
                 self.page.go_back()
                 self.page.wait_for_timeout(1000)
         print("Exit.")
-        self._db.close()
     
-    def get_fields(self) -> None:
+    def get_fields(self, index) -> None:
         """
         Metodo que obtiene datos de cada Bus parseando el source page de PW
         a BeautifulSoup, con la data de la seccion "Specifications" y demas campos
@@ -138,14 +138,19 @@ class RossBuses():
         soup = BeautifulSoup(source_html, 'html.parser')
         bus_title = soup.find("h5", class_='BlueTitle').text.strip()
         print(f"Scraping bus {bus_title}...")
-        if bus_title in self.scraped_buses: return
+        if bus_title in self.scraped_buses:
+            print(f"Skipping scraped bus {bus_title}") 
+            return
         bus_description = soup.find('div', class_='Describe FParagraph1 EditorText').text.strip()
         bus_image = soup.find('div', class_='ImgWrap')
         extra_info = soup.find('div', class_='Extra_Info_Wrap')
         if extra_info:
             ac = extra_info.find('li', re.compile('A/C'))
-        model_name = soup.find('div', class_='FaqTitle').text.strip()
-        bus_details = soup.find_all('li', class_='addColon')
+        # Obtenemos nombre del modelo (si hay mas de uno por bus) gracias al index
+        model_data = soup.find_all('div', class_='FaqTitle')[index]
+        model_name = model_data.text.strip()
+        # Debemos obtener las especificaciones de cada modelo dependiendo el index que clickeo PW
+        bus_details = soup.find_all('div', class_='hide FaqDetail')[index].find_all('li', class_='addColon')
         bus_info = {}
         bus_info['title'] = f'{bus_title} {model_name}' if model_name.lower() != 'specifications' else bus_title
         bus_info['model'] = model_name if model_name.lower() != 'specifications' else bus_title
@@ -153,12 +158,18 @@ class RossBuses():
         bus_info['airconditioning'] = ac.text if ac else None
         bus_info['image'] = bus_image.find('img')['src'].strip() if bus_image else None
         for item in bus_details:
+            # Iteramos sobre cada spec de la tabla "Specifications"
             key_div = item.find('div', class_='First')
             value_div = item.find('div', class_='Last')
+            # Armamos diccionario con spec y dato
             if key_div and value_div:
                 key = key_div.get_text(strip=True)
                 value = value_div.get_text(strip=True)
                 bus_info[key] = value
+        # Obtenemos numero de pasajeros del campo "Capacity"
+        if bus_info.get("Capacity"):
+            number_of_passenger = re.findall(r'\d+', bus_info["Capacity"])
+            bus_info["Capacity"] = int(number_of_passenger[0]) if number_of_passenger else None
         print(bus_info)
         self.insert_data(bus_info)
         
@@ -170,77 +181,90 @@ class RossBuses():
         ### Inserción de la data en tabla buses (por similitud de campos) ###
         print("INSERTING BUS DATA INTO MySQL...")
         buses_query = """
-                        INSERT INTO buses (title, model, 
-                            description, airconditioning, 
-                            passengers, engine, 
-                            transmission, gvwr, 
-                            brake
+                        INSERT INTO buses (
+                            title, model, description, airconditioning, 
+                            passengers, engine, transmission, gvwr, brake
                         ) 
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """
-        bus_id = self._db.insert(buses_query, (
-                                        data.get("title"), 
-                                        data.get("model"),
-                                        data.get("description"),
-                                        data.get("airconditioning").upper() if data.get("airconditioning") else "NONE",  # airconditioning
-                                        data.get("Capacity"), 
-                                        data.get("Engine (4N/5N/6N/6R)"),
-                                        data.get("Transmission (4N/5N/6N/6R)"), 
-                                        data.get("GVWR (4N)"),
-                                        data.get("Brakes (4N/5N/6N/6R)") 
-                                    ))
+                        VALUES (
+                            :title, :model, :description, :airconditioning, 
+                            :passengers, :engine, :transmission, :gvwr, :brake
+                        )
+                    """
+        bus_id = self.__db.insert(buses_query, 
+                                  {
+                                    "title": data.get("title"),
+                                    "model": data.get("model"),
+                                    "description": data.get("description"),
+                                    "airconditioning": 'NONE' if not data.get("airconditioning") or 'No' \
+                                            in data.get("airconditioning") else 'OTHER',
+                                    "passengers": data.get("Capacity"),
+                                    "engine": data.get("Engine")[:30] if data.get("Engine") else None,
+                                    "transmission": data.get("Transmission")[:60] if data.get("Transmission") else None,
+                                    "gvwr": data.get("GVWR")[:50] if data.get("GVWR") else None, 
+                                    "brake": data.get("Brakes")[:30] if data.get("Brakes") else None
+                                })
         print("BUS DATA INSERTED IN TABLE buses")
+        
         ### Inserción de la data en tabla buses_overview (por similitud de campos) ###
         overview_query = """
-                            INSERT INTO buses_overview (bus_id, mdesc, intdesc, extdesc, features, specs)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            INSERT INTO buses_overview (bus_id, mdesc, intdesc, extdesc, features, specs) 
+                            VALUES (:bus_id, :mdesc, :intdesc, :extdesc, :features, :specs)
                         """
+
         intdesc = f"""
-                    Interior Floor Length: {data.get('Interior Floor length', '')}
-                    Interior Height at Hip: {data.get('Interior height at hip', '')}
-                    Interior Height at Center Line: {data.get('Interior height at center line', '')}
-                    """
+                Interior Width: {data.get('Interior Width', '')}
+                Aisle Width: {data.get('Aisle Width', '')}
+                Interior Height: {data.get('Interior Height', '')}
+                """.strip()
 
         extdesc = f"""
-                    Exterior Length Overall: {data.get('Exterior length overall', '')}
-                    Exterior Width Overall: {data.get('Exterior width overall', '')}
-                    Exterior Height Overall: {data.get('Exterior height overall', '')}
-                    """
+                Exterior Width: {data.get('Exterior Width', '')}
+                Skirt Length: {data.get('Skirt Length', '')}
+                Overall Height: {data.get('Overall Height', '')}
+                """.strip()
+
         features = f"""
-                    Capacity: {data.get('Capacity', '')}
-                    Number of Rows: {data.get('Number of Rows', '')}
-                    Entrance Door: {data.get('Entrance door', '')}
-                    Rear Bumper: {data.get('Rear Bumper', '')}
-                    """
+                Capacity: {data.get('Capacity', '')}
+                Entrance Door: {data.get('Entrance Door', '')}
+                Rear Door: {data.get('Rear Door', '')}
+                Suspension: {data.get('Suspension', '')}
+                Steering: {data.get('Steering', '')}
+                """.strip()
 
         specs = f"""
-                    Engine: {data.get('Engine (4N/5N/6N/6R)', '')}
-                    Wheelbase (4N): {data.get('Wheelbase (4N)', '')}
-                    Wheelbase (5N/6N/6R): {data.get('Wheelbase (5N/6N/6R)', '')}
-                    Transmission: {data.get('Transmission (4N/5N/6N/6R)', '')}
-                    GVWR (4N): {data.get('GVWR (4N)', '')}
-                    GVWR (5N/6N/6R): {data.get('GVWR (5N/6N/6R)', '')}
-                    Fuel Tank: {data.get('Fuel Tank (4N/5N/6N/6R)', '')}
-                    Brakes: {data.get('Brakes (4N/5N/6N/6R)', '')}
-                    Tires: {data.get('Tires (4N/5N/6N/6R)', '')}
-                    Alternator: {data.get('Alternator (4N/5N/6N/6R)', '')}
-                    Battery: {data.get('Battery (4N/5N/6N/6R)', '')}
-                """
-        self._db.insert(overview_query, (
-                                            bus_id,
-                                            data.get("description"),
-                                            intdesc.strip(),
-                                            extdesc.strip(),
-                                            features.strip(),
-                                            specs.strip()
-                                        ))
+                Engine: {data.get('Engine', '')}
+                Wheelbase: {data.get('Wheelbase', '')}
+                Transmission: {data.get('Transmission', '')}
+                GVWR: {data.get('GVWR', '')}
+                Fuel Tank: {data.get('Fuel Tank', '')}
+                Brakes: {data.get('Brakes', '')}
+                Tires: {data.get('Tire Size', '')}
+                Alternator: {data.get('Alternator', '')}
+                Rear Axle: {data.get('Rear Axle', '')}
+                """.strip()
+        self.__db.insert(overview_query, {
+                                            "bus_id": bus_id,
+                                            "mdesc": data.get("description"),
+                                            "intdesc": intdesc,
+                                            "extdesc": extdesc,
+                                            "features": features,
+                                            "specs": specs
+                                        })
         print("BUS DATA INSERTED IN TABLE buses_overview")
+        
         ### Inserción de la data en tabla buses_images (solo tenemos link) ###
         images_query = """
-                        INSERT INTO buses_images (name, url, description, image_index, bus_id)
-                        VALUES (%s, %s, %s, %s, %s)
-                        """
-        self._db.insert(images_query, ('Main Image', data['img_url'], 'Main bus image', 0, bus_id))
+                        INSERT INTO buses_images (name, url, description, image_index, bus_id) 
+                        VALUES (:name, :url, :description, :image_index, :bus_id)
+                    """
+        self.__db.insert(images_query, {
+                                        "name": data.get("title"),
+                                        "url": data.get('image'),
+                                        "description": "Main bus image",
+                                        "image_index": 0,
+                                        "bus_id": bus_id
+                                        })
+
         print("BUS DATA INSERTED IN TABLE buses_images")
         
 if __name__ == '__main__':
